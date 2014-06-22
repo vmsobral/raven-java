@@ -26,6 +26,6 @@
         </links>
         <menu ref="parent" inherit="top"/>
         <menu ref="modules" inherit="top"/>
-        <menu ref="reports" inherit="top"/>
+        <menu name="Reporting" ref="reports" inherit="top"/>
     </body>
 </project>
