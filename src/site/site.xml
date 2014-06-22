@@ -26,6 +26,7 @@
         </links>
         <menu name="Overview">
             <item name="Introduction" href="index.html" />
+            <item name="Connection to Sentry" href="connectionsProtocols.html" />
         </menu>
         <menu ref="parent" inherit="top"/>
         <menu ref="modules" inherit="top"/>
