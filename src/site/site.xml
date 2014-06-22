@@ -24,6 +24,9 @@
             <item name="Sentry" href="https://www.getsentry.com/"/>
             <item name="Sentry on GitHub" href="https://www.github.com/getsentry/sentry/"/>
         </links>
+        <menu name="Overview">
+            <item name="Introduction" href="index.html" />
+        </menu>
         <menu ref="parent" inherit="top"/>
         <menu ref="modules" inherit="top"/>
         <menu name="Reporting" ref="reports" inherit="top"/>
