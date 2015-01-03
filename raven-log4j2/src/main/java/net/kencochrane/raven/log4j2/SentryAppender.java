@@ -68,6 +68,13 @@ public class SentryAppender extends AbstractAppender {
      * Might be empty in which case no tags are sent.
      */
     protected Map<String, String> tags = Collections.emptyMap();
+    /**
+     * Set of tags to look for in the MDC. These will be added as tags to be sent to sentry.
+     * <p>
+     * Might be empty in which case no mapped tags are set.
+     * </p>
+     */
+    private Set<String> extraTags = Collections.emptySet();
 
     /**
      * Creates an instance of SentryAppender.
@@ -97,6 +104,7 @@ public class SentryAppender extends AbstractAppender {
      * @param dsn          Data Source Name to access the Sentry server.
      * @param ravenFactory Name of the factory to use to build the {@link Raven} instance.
      * @param tags         Tags to add to each event.
+     * @param extraTags    Tags to search through the MDC.
      * @param filter       The filter, if any, to use.
      * @return The SentryAppender.
      */
@@ -105,6 +113,7 @@ public class SentryAppender extends AbstractAppender {
                                                 @PluginAttribute("dsn") final String dsn,
                                                 @PluginAttribute("ravenFactory") final String ravenFactory,
                                                 @PluginAttribute("tags") final String tags,
+                                                @PluginAttribute("extraTags") final String extraTags,
                                                 @PluginElement("filters") final Filter filter) {
 
         if (name == null) {
@@ -116,6 +125,8 @@ public class SentryAppender extends AbstractAppender {
         sentryAppender.setDsn(dsn);
         if (tags != null)
             sentryAppender.setTags(tags);
+        if (extraTags != null)
+            sentryAppender.setExtraTags(extraTags);
         sentryAppender.setRavenFactory(ravenFactory);
         return sentryAppender;
     }
@@ -207,45 +218,49 @@ public class SentryAppender extends AbstractAppender {
     protected Event buildEvent(LogEvent event) {
         Message eventMessage = event.getMessage();
         EventBuilder eventBuilder = new EventBuilder()
-                .setTimestamp(new Date(event.getTimeMillis()))
-                .setMessage(eventMessage.getFormattedMessage())
-                .setLogger(event.getLoggerName())
-                .setLevel(formatLevel(event.getLevel()))
-                .addExtra(THREAD_NAME, event.getThreadName());
+                .withTimestamp(new Date(event.getTimeMillis()))
+                .withMessage(eventMessage.getFormattedMessage())
+                .withLogger(event.getLoggerName())
+                .withLevel(formatLevel(event.getLevel()))
+                .withExtra(THREAD_NAME, event.getThreadName());
 
         if (!eventMessage.getFormattedMessage().equals(eventMessage.getFormat())) {
-            eventBuilder.addSentryInterface(new MessageInterface(eventMessage.getFormat(),
+            eventBuilder.withSentryInterface(new MessageInterface(eventMessage.getFormat(),
                     formatMessageParameters(eventMessage.getParameters())));
         }
 
         Throwable throwable = event.getThrown();
         if (throwable != null) {
-            eventBuilder.addSentryInterface(new ExceptionInterface(throwable));
+            eventBuilder.withSentryInterface(new ExceptionInterface(throwable));
         } else if (event.getSource() != null) {
             StackTraceElement[] stackTrace = {event.getSource()};
-            eventBuilder.addSentryInterface(new StackTraceInterface(stackTrace));
+            eventBuilder.withSentryInterface(new StackTraceInterface(stackTrace));
         }
 
         if (event.getSource() != null) {
-            eventBuilder.setCulprit(event.getSource());
+            eventBuilder.withCulprit(event.getSource());
         } else {
-            eventBuilder.setCulprit(event.getLoggerName());
+            eventBuilder.withCulprit(event.getLoggerName());
         }
 
         if (event.getContextStack() != null)
-            eventBuilder.addExtra(LOG4J_NDC, event.getContextStack().asList());
+            eventBuilder.withExtra(LOG4J_NDC, event.getContextStack().asList());
 
         if (event.getContextMap() != null) {
             for (Map.Entry<String, String> mdcEntry : event.getContextMap().entrySet()) {
-                eventBuilder.addExtra(mdcEntry.getKey(), mdcEntry.getValue());
+                if (extraTags.contains(mdcEntry.getKey())) {
+                    eventBuilder.withTag(mdcEntry.getKey(), mdcEntry.getValue());
+                } else {
+                    eventBuilder.withExtra(mdcEntry.getKey(), mdcEntry.getValue());
+                }
             }
         }
 
         if (event.getMarker() != null)
-            eventBuilder.addTag(LOG4J_MARKER, event.getMarker().getName());
+            eventBuilder.withTag(LOG4J_MARKER, event.getMarker().getName());
 
         for (Map.Entry<String, String> tagEntry : tags.entrySet())
-            eventBuilder.addTag(tagEntry.getKey(), tagEntry.getValue());
+            eventBuilder.withTag(tagEntry.getKey(), tagEntry.getValue());
 
         raven.runBuilderHelpers(eventBuilder);
         return eventBuilder.build();
@@ -266,6 +281,15 @@ public class SentryAppender extends AbstractAppender {
      */
     public void setTags(String tags) {
         this.tags = Splitter.on(",").withKeyValueSeparator(":").split(tags);
+    }
+
+    /**
+     * Set the mapped extras that will be used to search MDC and upgrade key pair to a tag sent along with the events.
+     *
+     * @param extraTags A String of mappedTags. mappedTags are separated by commas(,).
+     */
+    public void setExtraTags(String extraTags) {
+        this.extraTags = new HashSet<>(Arrays.asList(extraTags.split(",")));
     }
 
     @Override

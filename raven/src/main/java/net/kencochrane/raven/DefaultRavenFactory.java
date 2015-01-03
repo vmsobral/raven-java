@@ -1,15 +1,9 @@
 package net.kencochrane.raven;
 
-import net.kencochrane.raven.connection.AsyncConnection;
-import net.kencochrane.raven.connection.Connection;
-import net.kencochrane.raven.connection.HttpConnection;
-import net.kencochrane.raven.connection.UdpConnection;
+import net.kencochrane.raven.connection.*;
 import net.kencochrane.raven.dsn.Dsn;
 import net.kencochrane.raven.event.helper.HttpEventBuilderHelper;
-import net.kencochrane.raven.event.interfaces.ExceptionInterface;
-import net.kencochrane.raven.event.interfaces.HttpInterface;
-import net.kencochrane.raven.event.interfaces.MessageInterface;
-import net.kencochrane.raven.event.interfaces.StackTraceInterface;
+import net.kencochrane.raven.event.interfaces.*;
 import net.kencochrane.raven.marshaller.Marshaller;
 import net.kencochrane.raven.marshaller.json.*;
 import org.slf4j.Logger;
@@ -96,6 +90,12 @@ public class DefaultRavenFactory extends RavenFactory {
         } else if (protocol.equalsIgnoreCase("udp")) {
             logger.info("Using an UDP connection to Sentry.");
             connection = createUdpConnection(dsn);
+        } else if (protocol.equalsIgnoreCase("out")) {
+            logger.info("Using StdOut to send events.");
+            connection = createStdOutConnection(dsn);
+        } else if (protocol.equalsIgnoreCase("noop")) {
+            logger.info("Using noop to send events.");
+            connection = new NoopConnection();
         } else {
             throw new IllegalStateException("Couldn't create a connection for the protocol '" + protocol + "'");
         }
@@ -181,6 +181,20 @@ public class DefaultRavenFactory extends RavenFactory {
     }
 
     /**
+     * Uses stdout to send the logs.
+     *
+     * @param dsn Data Source Name of the Sentry server.
+     * @return an {@link OutputStreamConnection} using {@code System.out}.
+     */
+    protected Connection createStdOutConnection(Dsn dsn) {
+        //CHECKSTYLE.OFF: RegexpSinglelineJava
+        OutputStreamConnection stdOutConnection = new OutputStreamConnection(System.out);
+        //CHECKSTYLE.ON: RegexpSinglelineJava
+        stdOutConnection.setMarshaller(createMarshaller(dsn));
+        return stdOutConnection;
+    }
+
+    /**
      * Creates a JSON marshaller that will convert every {@link net.kencochrane.raven.event.Event} in a format
      * handled by the Sentry server.
      *
@@ -200,6 +214,7 @@ public class DefaultRavenFactory extends RavenFactory {
         marshaller.addInterfaceBinding(StackTraceInterface.class, stackTraceBinding);
         marshaller.addInterfaceBinding(ExceptionInterface.class, new ExceptionInterfaceBinding(stackTraceBinding));
         marshaller.addInterfaceBinding(MessageInterface.class, new MessageInterfaceBinding());
+        marshaller.addInterfaceBinding(UserInterface.class, new UserInterfaceBinding());
         HttpInterfaceBinding httpBinding = new HttpInterfaceBinding();
         //TODO: Add a way to clean the HttpRequest
         //httpBinding.

@@ -82,6 +82,25 @@ public class MyClass {
 }
 ```
 
+### Mapped Tags
+By default all MDC parameters are sent under the Additional Data Tab. By specify the mappedTags parameter in your
+configuration file. You can specify MDC keys to send as tags instead of including them in Additional Data.
+This allows them to be filtered within Sentry.
+
+```properties
+log4j.appender.SentryAppender.mappedTags=User,OS
+```
+```java
+    void logWithExtras() {
+        // MDC extras
+        MDC.put("User", "test user");
+        MDC.put("OS", "Linux");
+
+        // This adds a message with extras and MDC keys declared in mappedTags as tags to Sentry
+        logger.info("This is a test");
+    }
+```
+
 ## Asynchronous logging
 It is not recommended to attempt to set up `SentryAppender` within an
 [AsyncAppender](https://logging.apache.org/log4j/1.2/apidocs/org/apache/log4j/AsyncAppender.html).

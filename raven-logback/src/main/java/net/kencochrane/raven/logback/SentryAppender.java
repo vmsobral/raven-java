@@ -57,6 +57,10 @@ public class SentryAppender extends AppenderBase<ILoggingEvent> {
      * Might be empty in which case no tags are sent.
      */
     protected Map<String, String> tags = Collections.emptyMap();
+    /**
+     * Extras to use as tags.
+     */
+    protected Set<String> extraTags = Collections.emptySet();
 
     /**
      * Creates an instance of SentryAppender.
@@ -158,42 +162,46 @@ public class SentryAppender extends AppenderBase<ILoggingEvent> {
      */
     protected Event buildEvent(ILoggingEvent iLoggingEvent) {
         EventBuilder eventBuilder = new EventBuilder()
-                .setTimestamp(new Date(iLoggingEvent.getTimeStamp()))
-                .setMessage(iLoggingEvent.getFormattedMessage())
-                .setLogger(iLoggingEvent.getLoggerName())
-                .setLevel(formatLevel(iLoggingEvent.getLevel()))
-                .addExtra(THREAD_NAME, iLoggingEvent.getThreadName());
+                .withTimestamp(new Date(iLoggingEvent.getTimeStamp()))
+                .withMessage(iLoggingEvent.getFormattedMessage())
+                .withLogger(iLoggingEvent.getLoggerName())
+                .withLevel(formatLevel(iLoggingEvent.getLevel()))
+                .withExtra(THREAD_NAME, iLoggingEvent.getThreadName());
 
         if (iLoggingEvent.getArgumentArray() != null) {
-            eventBuilder.addSentryInterface(new MessageInterface(iLoggingEvent.getMessage(),
+            eventBuilder.withSentryInterface(new MessageInterface(iLoggingEvent.getMessage(),
                     formatMessageParameters(iLoggingEvent.getArgumentArray())));
         }
 
         if (iLoggingEvent.getThrowableProxy() != null) {
-            eventBuilder.addSentryInterface(new ExceptionInterface(extractExceptionQueue(iLoggingEvent)));
+            eventBuilder.withSentryInterface(new ExceptionInterface(extractExceptionQueue(iLoggingEvent)));
         } else if (iLoggingEvent.getCallerData().length > 0) {
-            eventBuilder.addSentryInterface(new StackTraceInterface(iLoggingEvent.getCallerData()));
+            eventBuilder.withSentryInterface(new StackTraceInterface(iLoggingEvent.getCallerData()));
         }
 
         if (iLoggingEvent.getCallerData().length > 0) {
-            eventBuilder.setCulprit(iLoggingEvent.getCallerData()[0]);
+            eventBuilder.withCulprit(iLoggingEvent.getCallerData()[0]);
         } else {
-            eventBuilder.setCulprit(iLoggingEvent.getLoggerName());
+            eventBuilder.withCulprit(iLoggingEvent.getLoggerName());
         }
 
         for (Map.Entry<String, String> contextEntry : iLoggingEvent.getLoggerContextVO().getPropertyMap().entrySet()) {
-            eventBuilder.addExtra(contextEntry.getKey(), contextEntry.getValue());
+            eventBuilder.withExtra(contextEntry.getKey(), contextEntry.getValue());
         }
 
         for (Map.Entry<String, String> mdcEntry : iLoggingEvent.getMDCPropertyMap().entrySet()) {
-            eventBuilder.addExtra(mdcEntry.getKey(), mdcEntry.getValue());
+            if (extraTags.contains(mdcEntry.getKey())) {
+                eventBuilder.withTag(mdcEntry.getKey(), mdcEntry.getValue());
+            } else {
+                eventBuilder.withExtra(mdcEntry.getKey(), mdcEntry.getValue());
+            }
         }
 
         if (iLoggingEvent.getMarker() != null)
-            eventBuilder.addTag(LOGBACK_MARKER, iLoggingEvent.getMarker().getName());
+            eventBuilder.withTag(LOGBACK_MARKER, iLoggingEvent.getMarker().getName());
 
         for (Map.Entry<String, String> tagEntry : tags.entrySet())
-            eventBuilder.addTag(tagEntry.getKey(), tagEntry.getValue());
+            eventBuilder.withTag(tagEntry.getKey(), tagEntry.getValue());
 
         raven.runBuilderHelpers(eventBuilder);
         return eventBuilder.build();
@@ -278,6 +286,15 @@ public class SentryAppender extends AppenderBase<ILoggingEvent> {
      */
     public void setTags(String tags) {
         this.tags = Splitter.on(",").withKeyValueSeparator(":").split(tags);
+    }
+
+    /**
+     * Set the mapped extras that will be used to search MDC and upgrade key pair to a tag sent along with the events.
+     *
+     * @param extraTags A String of mappedTags. mappedTags are separated by commas(,).
+     */
+    public void setExtraTags(String extraTags) {
+        this.extraTags = new HashSet<>(Arrays.asList(extraTags.split(",")));
     }
 
     @Override

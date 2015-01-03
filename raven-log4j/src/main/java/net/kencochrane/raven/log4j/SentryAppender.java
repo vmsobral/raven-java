@@ -16,9 +16,7 @@ import org.apache.log4j.spi.ErrorCode;
 import org.apache.log4j.spi.LocationInfo;
 import org.apache.log4j.spi.LoggingEvent;
 
-import java.util.Collections;
-import java.util.Date;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Appender for log4j in charge of sending the logged events to a Sentry server.
@@ -56,6 +54,19 @@ public class SentryAppender extends AppenderSkeleton {
      * Might be empty in which case no tags are sent.
      */
     protected Map<String, String> tags = Collections.emptyMap();
+    /**
+     * List of tags to look for in the MDC. These will be added as tags to be sent to sentry.
+     * <p>
+     * Might be empty in which case no mapped tags are set.
+     */
+    protected Set<String> extraTags = Collections.emptySet();
+
+    /**
+     * List of tags to look for in log4j's MDC. These will be added as tags to be sent to sentry.
+     * <p>
+     * Might be empty in which case no mapped tags are set.
+     */
+    protected List<String> mappedTags = Collections.emptyList();
 
     /**
      * Creates an instance of SentryAppender.
@@ -155,40 +166,45 @@ public class SentryAppender extends AppenderSkeleton {
      */
     protected Event buildEvent(LoggingEvent loggingEvent) {
         EventBuilder eventBuilder = new EventBuilder()
-                .setTimestamp(new Date(loggingEvent.getTimeStamp()))
-                .setMessage(loggingEvent.getRenderedMessage())
-                .setLogger(loggingEvent.getLoggerName())
-                .setLevel(formatLevel(loggingEvent.getLevel()))
-                .addExtra(THREAD_NAME, loggingEvent.getThreadName());
+                .withTimestamp(new Date(loggingEvent.getTimeStamp()))
+                .withMessage(loggingEvent.getRenderedMessage())
+                .withLogger(loggingEvent.getLoggerName())
+                .withLevel(formatLevel(loggingEvent.getLevel()))
+                .withExtra(THREAD_NAME, loggingEvent.getThreadName());
 
         if (loggingEvent.getThrowableInformation() != null) {
             Throwable throwable = loggingEvent.getThrowableInformation().getThrowable();
-            eventBuilder.addSentryInterface(new ExceptionInterface(throwable));
+            eventBuilder.withSentryInterface(new ExceptionInterface(throwable));
         } else if (loggingEvent.getLocationInformation().fullInfo != null) {
             LocationInfo location = loggingEvent.getLocationInformation();
             if (!LocationInfo.NA.equals(location.getFileName()) && !LocationInfo.NA.equals(location.getLineNumber())) {
                 StackTraceElement[] stackTrace = {asStackTraceElement(location)};
-                eventBuilder.addSentryInterface(new StackTraceInterface(stackTrace));
+                eventBuilder.withSentryInterface(new StackTraceInterface(stackTrace));
             }
         }
 
         // Set culprit
         if (loggingEvent.getLocationInformation().fullInfo != null) {
-            eventBuilder.setCulprit(asStackTraceElement(loggingEvent.getLocationInformation()));
+            eventBuilder.withCulprit(asStackTraceElement(loggingEvent.getLocationInformation()));
         } else {
-            eventBuilder.setCulprit(loggingEvent.getLoggerName());
+            eventBuilder.withCulprit(loggingEvent.getLoggerName());
         }
 
         if (loggingEvent.getNDC() != null)
-            eventBuilder.addExtra(LOG4J_NDC, loggingEvent.getNDC());
+            eventBuilder.withExtra(LOG4J_NDC, loggingEvent.getNDC());
 
         @SuppressWarnings("unchecked")
         Map<String, Object> properties = (Map<String, Object>) loggingEvent.getProperties();
-        for (Map.Entry<String, Object> mdcEntry : properties.entrySet())
-            eventBuilder.addExtra(mdcEntry.getKey(), mdcEntry.getValue());
+        for (Map.Entry<String, Object> mdcEntry : properties.entrySet()) {
+            if (extraTags.contains(mdcEntry.getKey())) {
+                eventBuilder.withTag(mdcEntry.getKey(), mdcEntry.getValue().toString());
+            } else {
+                eventBuilder.withExtra(mdcEntry.getKey(), mdcEntry.getValue());
+            }
+        }
 
         for (Map.Entry<String, String> tagEntry : tags.entrySet())
-            eventBuilder.addTag(tagEntry.getKey(), tagEntry.getValue());
+            eventBuilder.withTag(tagEntry.getKey(), tagEntry.getValue());
 
         raven.runBuilderHelpers(eventBuilder);
         return eventBuilder.build();
@@ -209,6 +225,15 @@ public class SentryAppender extends AppenderSkeleton {
      */
     public void setTags(String tags) {
         this.tags = Splitter.on(",").withKeyValueSeparator(":").split(tags);
+    }
+
+    /**
+     * Set the mapped extras that will be used to search MDC and upgrade key pair to a tag sent along with the events.
+     *
+     * @param extraTags A String of mappedTags. mappedTags are separated by commas(,).
+     */
+    public void setExtraTags(String extraTags) {
+        this.extraTags = new HashSet<>(Arrays.asList(extraTags.split(",")));
     }
 
     @Override

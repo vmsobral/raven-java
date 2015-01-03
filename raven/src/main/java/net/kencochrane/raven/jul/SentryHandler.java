@@ -10,6 +10,7 @@ import net.kencochrane.raven.event.Event;
 import net.kencochrane.raven.event.EventBuilder;
 import net.kencochrane.raven.event.interfaces.ExceptionInterface;
 import net.kencochrane.raven.event.interfaces.MessageInterface;
+import org.slf4j.MDC;
 
 import java.text.MessageFormat;
 import java.util.*;
@@ -45,6 +46,13 @@ public class SentryHandler extends Handler {
      * Tags to add to every event.
      */
     protected Map<String, String> tags = Collections.emptyMap();
+
+    /**
+     * Set of tags to look for in the MDC. These will be added as tags to be sent to sentry.
+     * <p>
+     * Might be empty in which case no mapped tags are set.
+     */
+    private Set<String> extraTags = Collections.emptySet();
 
     /**
      * Creates an instance of SentryHandler.
@@ -106,6 +114,9 @@ public class SentryHandler extends Handler {
         String tagsProperty = manager.getProperty(className + ".tags");
         if (tagsProperty != null)
             tags = Splitter.on(",").withKeyValueSeparator(":").split(tagsProperty);
+        String extraTagsProperty = manager.getProperty(className + ".extraTags");
+        if (extraTagsProperty != null)
+            extraTags = new HashSet<>(Arrays.asList(extraTagsProperty.split(",")));
     }
 
     @Override
@@ -152,9 +163,9 @@ public class SentryHandler extends Handler {
      */
     protected Event buildEvent(LogRecord record) {
         EventBuilder eventBuilder = new EventBuilder()
-                .setLevel(getLevel(record.getLevel()))
-                .setTimestamp(new Date(record.getMillis()))
-                .setLogger(record.getLoggerName());
+                .withLevel(getLevel(record.getLevel()))
+                .withTimestamp(new Date(record.getMillis()))
+                .withLogger(record.getLoggerName());
 
         String message = record.getMessage();
         if (record.getResourceBundle() != null && record.getResourceBundle().containsKey(record.getMessage())) {
@@ -162,28 +173,39 @@ public class SentryHandler extends Handler {
         }
         if (record.getParameters() != null) {
             List<String> parameters = formatMessageParameters(record.getParameters());
-            eventBuilder.addSentryInterface(new MessageInterface(message, parameters));
+            eventBuilder.withSentryInterface(new MessageInterface(message, parameters));
             message = MessageFormat.format(message, record.getParameters());
         }
-        eventBuilder.setMessage(message);
+        eventBuilder.withMessage(message);
 
         Throwable throwable = record.getThrown();
         if (throwable != null)
-            eventBuilder.addSentryInterface(new ExceptionInterface(throwable));
+            eventBuilder.withSentryInterface(new ExceptionInterface(throwable));
 
         if (record.getSourceClassName() != null && record.getSourceMethodName() != null) {
             StackTraceElement fakeFrame = new StackTraceElement(record.getSourceClassName(),
                     record.getSourceMethodName(), null, -1);
-            eventBuilder.setCulprit(fakeFrame);
+            eventBuilder.withCulprit(fakeFrame);
         } else {
-            eventBuilder.setCulprit(record.getLoggerName());
+            eventBuilder.withCulprit(record.getLoggerName());
+        }
+
+        Map<String, String> mdc = MDC.getMDCAdapter().getCopyOfContextMap();
+        if (mdc != null) {
+            for (Map.Entry<String, String> mdcEntry : mdc.entrySet()) {
+                if (extraTags.contains(mdcEntry.getKey())) {
+                    eventBuilder.withTag(mdcEntry.getKey(), mdcEntry.getValue());
+                } else {
+                    eventBuilder.withExtra(mdcEntry.getKey(), mdcEntry.getValue());
+                }
+            }
         }
 
         for (Map.Entry<String, String> tagEntry : tags.entrySet()) {
-            eventBuilder.addTag(tagEntry.getKey(), tagEntry.getValue());
+            eventBuilder.withTag(tagEntry.getKey(), tagEntry.getValue());
         }
 
-        eventBuilder.addExtra(THREAD_ID, record.getThreadID());
+        eventBuilder.withExtra(THREAD_ID, record.getThreadID());
 
         raven.runBuilderHelpers(eventBuilder);
         return eventBuilder.build();
