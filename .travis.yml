@@ -1,6 +1,7 @@
 language: java
 script: mvn verify
 jdk:
+  - openjdk6
   - oraclejdk7
   - oraclejdk8
 cache:

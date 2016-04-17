@@ -55,9 +55,9 @@ public class HttpInterfaceTest {
             mockHttpServletRequest.getRemoteUser();
             result = "remoteUser";
             mockHttpServletRequest.getHeaderNames();
-            result = Collections.emptyEnumeration();
+            result = Collections.enumeration(Collections.emptyList());
             mockHttpServletRequest.getHeaders(anyString);
-            result = Collections.emptyEnumeration();
+            result = Collections.enumeration(Collections.emptyList());
         }};
     }
 

@@ -17,7 +17,7 @@ import java.util.Set;
 public abstract class RavenFactory {
     private static final ServiceLoader<RavenFactory> AUTO_REGISTERED_FACTORIES =
         ServiceLoader.load(RavenFactory.class, RavenFactory.class.getClassLoader());
-    private static final Set<RavenFactory> MANUALLY_REGISTERED_FACTORIES = new HashSet<>();
+    private static final Set<RavenFactory> MANUALLY_REGISTERED_FACTORIES = new HashSet<RavenFactory>();
     private static final Logger logger = LoggerFactory.getLogger(RavenFactory.class);
 
     /**
