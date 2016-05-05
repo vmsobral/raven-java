@@ -1,11 +1,10 @@
 package com.getsentry.raven.jpos;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -15,7 +14,7 @@ import org.jpos.core.Configuration;
 import org.jpos.core.ConfigurationException;
 import org.jpos.util.Log;
 import org.jpos.util.LogEvent;
-import org.jpos.util.SimpleLogListener;
+import org.jpos.util.LogListener;
 
 import com.getsentry.raven.Raven;
 import com.getsentry.raven.RavenFactory;
@@ -30,12 +29,7 @@ import com.getsentry.raven.util.Util;
 /**
  * Listener for JPOS in charge of sending the logged events to a Sentry server.
  */
-public class SentryListener extends SimpleLogListener 
-	implements Configurable {
-    /**
-     * Name of the {@link Event#extra} property containing NDC details.
-     */
-    public static final String JPOS_NDC = "jpos-NDC";
+public class SentryListener implements Configurable, LogListener {
     /**
      * Name of the {@link Event#extra} property containing the Thread name.
      */
@@ -47,7 +41,7 @@ public class SentryListener extends SimpleLogListener
      */
     protected Raven raven;
     /**
-     * DSN property of the appender.
+     * DSN property of the listener.
      * <p>
      * Might be null in which case the DSN should be detected automatically.
      */
@@ -82,6 +76,24 @@ public class SentryListener extends SimpleLogListener
      * Might be empty in which case no mapped tags are set.
      */
     protected Set<String> extraTags = Collections.emptySet();
+    /**
+     * Priority tag which restricts the level of messages sent to Raven
+     */
+    private String priority = Log.WARN;
+    /**
+     * Hashtable representing the possible levels of logging and its ordering
+     */
+	private static Hashtable<String, Integer> levels;
+
+    static{
+            levels = new Hashtable<String, Integer>(6);
+            levels.put(Log.TRACE, 1);
+            levels.put(Log.DEBUG, 2);
+            levels.put(Log.INFO, 3);
+            levels.put(Log.WARN, 4);
+            levels.put(Log.ERROR, 5);
+            levels.put(Log.FATAL, 6);
+    }
 
     /**
      * Creates an instance of SentryAppender.
@@ -134,17 +146,18 @@ public class SentryListener extends SimpleLogListener
 
     /**
      * Initialises the Raven instance.
+     * @throws Exception 
      */
-    protected void initRaven() {
+    protected void initRaven() throws Exception {
         try {
             if (dsn == null)
                 dsn = Dsn.dsnLookup();
 
             raven = RavenFactory.ravenInstance(new Dsn(dsn), ravenFactory);
         } catch (InvalidDsnException e) {
-        	logDebugEx("An exception occurred during the retrieval of the DSN for Raven", e);
+        	throw new InvalidDsnException("An exception occurred during the retrieval of the DSN for Raven", e);
         } catch (Exception e) {
-        	logDebugEx("An exception occurred during the creation of a Raven instance", e);
+        	throw new Exception("An exception occurred during the creation of a Raven instance", e);
         }
     }
     
@@ -153,15 +166,17 @@ public class SentryListener extends SimpleLogListener
 		// Do not log the event if the current thread is managed by raven
         if (RavenEnvironment.isManagingThread())
             return null;
-
+        
         RavenEnvironment.startManagingThread();
         try {
-            Event event = buildEvent(logEvent);
-            raven.sendEvent(event);
+        	if (permitLogging(logEvent.getTag())) {
+                
+	            Event event = buildEvent(logEvent);
+	            raven.sendEvent(event);
+	            
+	            return logEvent;
+        	}
             
-            return logEvent;
-        } catch (Exception e) {
-        	logDebugEx("An exception occurred while creating a new event in Raven", e);
         } finally {
             RavenEnvironment.stopManagingThread();
         }
@@ -170,14 +185,14 @@ public class SentryListener extends SimpleLogListener
 	}
 
     /**
-     * Builds an Event based on the logging event.
+     * Builds an Event based on the log event.
      *
-     * @param loggingEvent Log generated.
+     * @param logEvent Log generated.
      * @return Event containing details provided by the logging system.
      */
     protected Event buildEvent(LogEvent logEvent) {
     	
-    	List<Object> payLoad = logEvent.getPayLoad();
+//    	List<Object> payLoad = logEvent.getPayLoad();
     	
         EventBuilder eventBuilder = new EventBuilder()
                 .withTimestamp(new Date())
@@ -194,13 +209,15 @@ public class SentryListener extends SimpleLogListener
             eventBuilder.withRelease(release.trim());
         }
         
-        synchronized (payLoad) {
-            for (Object o : payLoad) {
+        synchronized (logEvent.getPayLoad()) {
+            for (Object o : logEvent.getPayLoad()) {
             	if (o instanceof Throwable) {
                     eventBuilder.withSentryInterface(new ExceptionInterface((Throwable) o));
             	}
             	else if (o != null) {
             		eventBuilder.withMessage(o.toString());
+            		System.out.println(o.toString());
+            		System.out.println("FIMFIMFIMFIMFIM");
             	}
             }
         }
@@ -274,43 +291,50 @@ public class SentryListener extends SimpleLogListener
         this.extraTags = new HashSet<>(Arrays.asList(extraTags.split(",")));
     }
 
-    @Override
-    public void close() {
+    //TODO check necessity
+    public void close() throws Exception {
         RavenEnvironment.startManagingThread();
         try {
             this.close();
             if (raven != null)
                 raven.closeConnection();
         } catch (Exception e) {
-        	logDebugEx("An exception occurred while closing the Raven connection", e);
+        	throw new Exception("An exception occurred while closing the Raven connection", e);
         } finally {
             RavenEnvironment.stopManagingThread();
         }
-    }
-    
-    protected void logDebugEx(String msg, Throwable e){
-        ByteArrayOutputStream os = new ByteArrayOutputStream();
-        PrintStream ps = new PrintStream(os);
-        ps.println(msg);
-        e.printStackTrace(ps);
-        ps.close();
-//        logDebug(os.toString());
     }
 
 	@Override
 	public void setConfiguration(Configuration cfg) throws ConfigurationException {
 
-		this.dsn = cfg.get("dsn");
-		
-		if (raven == null)
-            initRaven();
+		try {
+            
+			this.dsn = cfg.get("dsn");
+			String log_priority = cfg.get("priority", Log.WARN);
+			
+	        if ( (log_priority != null) && (!log_priority.trim().equals("")) )
+	        {
+	        	if (levels.containsKey(log_priority))
+	        		priority = log_priority;
+	        }
+	        if (raven == null)
+	            initRaven();
+	        
+		} catch (Exception e) {
+			throw new ConfigurationException (e);
+		}
 	}
-    
-//    protected synchronized void logDebug (String msg) {
-//        if (p != null) {
-//            p.println ("<log realm=\"rotate-log-listener\" at=\""+new Date().toString() +"\">");
-//            p.println ("   "+msg);
-//            p.println ("</log>");
-//        }
-//    }
+	
+	public boolean permitLogging(String tagLevel)
+	{
+		Integer I = (Integer)levels.get(tagLevel);
+
+	    if (I == null) {
+	    	return false;
+	    } else {
+	    	Integer J = (Integer)levels.get(priority);
+	    	return (I >= J);
+	    }
+	}
 }
