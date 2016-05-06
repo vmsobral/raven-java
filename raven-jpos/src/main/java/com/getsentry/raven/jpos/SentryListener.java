@@ -1,11 +1,13 @@
 package com.getsentry.raven.jpos;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.Hashtable;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -30,10 +32,6 @@ import com.getsentry.raven.util.Util;
  * Listener for JPOS in charge of sending the logged events to a Sentry server.
  */
 public class SentryListener implements Configurable, LogListener {
-    /**
-     * Name of the {@link Event#extra} property containing the Thread name.
-     */
-    public static final String THREAD_NAME = "Raven-Threadname";
     /**
      * Current instance of {@link Raven}.
      *
@@ -155,33 +153,33 @@ public class SentryListener implements Configurable, LogListener {
 
             raven = RavenFactory.ravenInstance(new Dsn(dsn), ravenFactory);
         } catch (InvalidDsnException e) {
-        	throw new InvalidDsnException("An exception occurred during the retrieval of the DSN for Raven", e);
+        	handleError("An exception occurred during the retrieval of the DSN for Raven", e);
         } catch (Exception e) {
-        	throw new Exception("An exception occurred during the creation of a Raven instance", e);
+        	handleError("An exception occurred during the creation of a Raven instance", e);
         }
     }
     
 	@Override
-	public LogEvent log(LogEvent logEvent) {
+	public synchronized LogEvent log(LogEvent logEvent) {
 		// Do not log the event if the current thread is managed by raven
-        if (RavenEnvironment.isManagingThread())
-            return null;
+        if (!RavenEnvironment.isManagingThread()) {
         
-        RavenEnvironment.startManagingThread();
-        try {
-        	if (permitLogging(logEvent.getTag())) {
-                
-	            Event event = buildEvent(logEvent);
-	            raven.sendEvent(event);
-	            
-	            return logEvent;
-        	}
-            
-        } finally {
-            RavenEnvironment.stopManagingThread();
+	        RavenEnvironment.startManagingThread();
+	        try {
+	        	if (permitLogging(logEvent.getTag())) {
+	                
+		            Event event = buildEvent(logEvent);
+		            raven.sendEvent(event);
+	        	}
+	        } catch (Exception e) {
+	        	handleError("An exception occurred while creating a new event in Raven", e);
+	        	
+	        } finally {
+	            RavenEnvironment.stopManagingThread();
+	        }
         }
         
-        return null;
+        return logEvent;
 	}
 
     /**
@@ -192,14 +190,13 @@ public class SentryListener implements Configurable, LogListener {
      */
     protected Event buildEvent(LogEvent logEvent) {
     	
-//    	List<Object> payLoad = logEvent.getPayLoad();
+    	String message = new String();
     	
         EventBuilder eventBuilder = new EventBuilder()
                 .withTimestamp(new Date())
-                .withMessage(logEvent.toString())
                 .withLogger(logEvent.getSource().getLogger().getName())
                 .withLevel(formatLevel(logEvent.getTag()))
-                .withExtra(THREAD_NAME, logEvent.getRealm());
+                .withExtra("Realm", logEvent.getRealm());
 
         if (!Util.isNullOrEmpty(serverName)) {
             eventBuilder.withServerName(serverName.trim());
@@ -209,18 +206,33 @@ public class SentryListener implements Configurable, LogListener {
             eventBuilder.withRelease(release.trim());
         }
         
-        synchronized (logEvent.getPayLoad()) {
-            for (Object o : logEvent.getPayLoad()) {
-            	if (o instanceof Throwable) {
-                    eventBuilder.withSentryInterface(new ExceptionInterface((Throwable) o));
-            	}
-            	else if (o != null) {
-            		eventBuilder.withMessage(o.toString());
-            		System.out.println(o.toString());
-            		System.out.println("FIMFIMFIMFIMFIM");
-            	}
-            }
+        if (logEvent.getPayLoad().isEmpty()) {
+        	message = logEvent.getPayLoad().toString();
         }
+        else {
+	        for (Object o : logEvent.getPayLoad()) {
+	        	if (o instanceof SQLException) {
+	                SQLException e = (SQLException) o;
+	                eventBuilder.withSentryInterface(new ExceptionInterface(e));
+	                eventBuilder.withExtra("SQLState", e.getSQLState());
+//	                eventBuilder.withCulprit(e.ge);
+	                if (message.isEmpty())
+	                	message = e.getMessage();
+	            }
+	        	else if (o instanceof Throwable) {
+	                eventBuilder.withSentryInterface(new ExceptionInterface((Throwable) o));
+	                if (message.isEmpty())
+	                	message = ((Throwable) o).getMessage();
+	        	}
+	        	else if (o != null) {
+	        		message = o.toString();
+	        	}
+	        	else
+	        		if (message.isEmpty()) message = "null";
+	        }
+        }
+        
+        eventBuilder.withMessage(message);
         
 //        if (loggingEvent.getLocationInformation().fullInfo != null) {
 //            LocationInfo location = loggingEvent.getLocationInformation();
@@ -337,4 +349,12 @@ public class SentryListener implements Configurable, LogListener {
 	    	return (I >= J);
 	    }
 	}
+	
+	 protected void handleError(String msg, Throwable e) {
+        ByteArrayOutputStream os = new ByteArrayOutputStream();
+        PrintStream ps = new PrintStream(os);
+        ps.println(msg);
+        e.printStackTrace(ps);
+        ps.close();
+    }
 }
