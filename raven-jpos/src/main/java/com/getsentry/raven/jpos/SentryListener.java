@@ -32,6 +32,10 @@ import com.getsentry.raven.util.Util;
  * Listener for JPOS in charge of sending the logged events to a Sentry server.
  */
 public class SentryListener implements Configurable, LogListener {
+	/**
+	 * States is the listener is started or not
+	 */
+	protected boolean started = false;
     /**
      * Current instance of {@link Raven}.
      *
@@ -131,18 +135,6 @@ public class SentryListener implements Configurable, LogListener {
     }
 
     /**
-     * Transforms the location info of a log into a stacktrace element (stackframe).
-     *
-     * @param location details on the location of the log.
-     * @return a stackframe.
-     */
-//    protected static StackTraceElement asStackTraceElement(LocationInfo location) {
-//        String fileName = (LocationInfo.NA.equals(location.getFileName())) ? null : location.getFileName();
-//        int line = (LocationInfo.NA.equals(location.getLineNumber())) ? -1 : Integer.parseInt(location.getLineNumber());
-//        return new StackTraceElement(location.getClassName(), location.getMethodName(), fileName, line);
-//    }
-
-    /**
      * Initialises the Raven instance.
      * @throws Exception 
      */
@@ -215,17 +207,20 @@ public class SentryListener implements Configurable, LogListener {
 	                SQLException e = (SQLException) o;
 	                eventBuilder.withSentryInterface(new ExceptionInterface(e));
 	                eventBuilder.withExtra("SQLState", e.getSQLState());
-//	                eventBuilder.withCulprit(e.ge);
+	                eventBuilder.withCulprit(e.getStackTrace()[0]);
 	                if (message.isEmpty())
 	                	message = e.getMessage();
 	            }
 	        	else if (o instanceof Throwable) {
-	                eventBuilder.withSentryInterface(new ExceptionInterface((Throwable) o));
+	        		Throwable t = (Throwable) o;
+	                eventBuilder.withSentryInterface(new ExceptionInterface(t));
+	                eventBuilder.withCulprit(t.getStackTrace()[0]);
 	                if (message.isEmpty())
-	                	message = ((Throwable) o).getMessage();
+	                	message = t.getMessage();
 	        	}
 	        	else if (o != null) {
 	        		message = o.toString();
+	        		eventBuilder.withCulprit(logEvent.getRealm());
 	        	}
 	        	else
 	        		if (message.isEmpty()) message = "null";
@@ -234,34 +229,6 @@ public class SentryListener implements Configurable, LogListener {
         
         eventBuilder.withMessage(message);
         
-//        if (loggingEvent.getLocationInformation().fullInfo != null) {
-//            LocationInfo location = loggingEvent.getLocationInformation();
-//            if (!LocationInfo.NA.equals(location.getFileName()) && !LocationInfo.NA.equals(location.getLineNumber())) {
-//                StackTraceElement[] stackTrace = {asStackTraceElement(location)};
-//                eventBuilder.withSentryInterface(new StackTraceInterface(stackTrace));
-//            }
-//        }
-
-        // Set culprit
-//        if (loggingEvent.getLocationInformation().fullInfo != null) {
-//            eventBuilder.withCulprit(asStackTraceElement(loggingEvent.getLocationInformation()));
-//        } else {
-//            eventBuilder.withCulprit(loggingEvent.getLoggerName());
-//        }
-//
-//        if (loggingEvent.getNDC() != null)
-//            eventBuilder.withExtra(LOG4J_NDC, loggingEvent.getNDC());
-
-//        @SuppressWarnings("unchecked")
-//        Map<String, Object> properties = (Map<String, Object>) loggingEvent.getProperties();
-//        for (Map.Entry<String, Object> mdcEntry : properties.entrySet()) {
-//            if (extraTags.contains(mdcEntry.getKey())) {
-//                eventBuilder.withTag(mdcEntry.getKey(), mdcEntry.getValue().toString());
-//            } else {
-//                eventBuilder.withExtra(mdcEntry.getKey(), mdcEntry.getValue());
-//            }
-//        }
-
         for (Map.Entry<String, String> tagEntry : tags.entrySet())
             eventBuilder.withTag(tagEntry.getKey(), tagEntry.getValue());
 
@@ -303,13 +270,14 @@ public class SentryListener implements Configurable, LogListener {
         this.extraTags = new HashSet<>(Arrays.asList(extraTags.split(",")));
     }
 
-    //TODO check necessity
     public void close() throws Exception {
         RavenEnvironment.startManagingThread();
         try {
-            this.close();
+        	if (!started)
+        		return;
             if (raven != null)
                 raven.closeConnection();
+            this.started = false;
         } catch (Exception e) {
         	throw new Exception("An exception occurred while closing the Raven connection", e);
         } finally {
@@ -323,6 +291,8 @@ public class SentryListener implements Configurable, LogListener {
 		try {
             
 			this.dsn = cfg.get("dsn");
+			setTags(cfg.get("tags"));
+			this.ravenFactory = cfg.get("ravenFactory", null);
 			String log_priority = cfg.get("priority", Log.WARN);
 			
 	        if ( (log_priority != null) && (!log_priority.trim().equals("")) )
@@ -333,13 +303,14 @@ public class SentryListener implements Configurable, LogListener {
 	        if (raven == null)
 	            initRaven();
 	        
+	        this.started = true;
+	        
 		} catch (Exception e) {
 			throw new ConfigurationException (e);
 		}
 	}
 	
-	public boolean permitLogging(String tagLevel)
-	{
+	public boolean permitLogging(String tagLevel) {
 		Integer I = (Integer)levels.get(tagLevel);
 
 	    if (I == null) {
@@ -350,11 +321,10 @@ public class SentryListener implements Configurable, LogListener {
 	    }
 	}
 	
-	 protected void handleError(String msg, Throwable e) {
-        ByteArrayOutputStream os = new ByteArrayOutputStream();
-        PrintStream ps = new PrintStream(os);
+	protected void handleError(String msg, Throwable e) {
+        PrintStream ps = new PrintStream(new ByteArrayOutputStream());
         ps.println(msg);
-        e.printStackTrace(ps);
+        if (e != null) e.printStackTrace(ps);
         ps.close();
     }
 }
